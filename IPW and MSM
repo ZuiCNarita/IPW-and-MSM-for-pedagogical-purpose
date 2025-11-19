@@ -1,0 +1,70 @@
+# Load the appropriate packages
+library(geepack)
+library(multcomp)
+
+# Read your data
+data <- read.csv("data.csv")
+
+## Association between time-varying exposure at T1 and T2 and outcome at T3.
+## We need to adjust for both time-fixed and time-varying confounders.
+## Here we assume that the outcome is continuous.
+## For IPW, we use stabilized weights.
+
+# Get IPW for A1
+denA1 <- glm(
+  exposureT1 ~ age + femalegender + covariate1T1 + covariate2T1 + covariate3T1 +
+    covariate4T1 + covariate5T1 + covariate6T1 + covariate7T1 + covariate8T1 + outcomeT1, 
+  family = binomial, data = data
+)
+numA1 <- glm(exposureT1 ~ 1, family = binomial, data = data)
+data$wA1 <- ifelse(data$exposureT1 == 1,
+                   predict(numA1, type="response") / predict(denA1, type="response"),
+                   (1 - predict(numA1, type="response")) / (1 - predict(denA1, type="response")))
+# Truncation to address the issue of extreme weights.
+# You can apply the same truncation at the 0.01 percentile, although the impact is minimal.
+data$wA1_t <- pmin(data$wA1, quantile(data$wA1, 0.99, na.rm=TRUE))
+
+# Get IPW for A2
+# Suppose covariates 4 to 6 are time-varying confounding
+denA2 <- glm(
+  exposureT2 ~ exposureT1 + age + femalegender + covariate1T1 + covariate2T1 + covariate3T1 +
+    covariate4T1 + covariate5T1 + covariate6T1 + covariate7T1 + covariate8T1  + outcomeT1 + 
+    covariate4T2 + covariate5T2 + covariate6T2 + outcomeT2,
+  family = binomial, data = data
+)
+numA2 <- glm(exposureT2 ~ exposureT1, family = binomial, data = data)
+data$wA2 <- ifelse(data$exposureT2 == 1,
+                   predict(numA2, type="response") / predict(denA2, type="response"),
+                   (1 - predict(numA2, type="response")) / (1 - predict(denA2, type="response")))
+# Truncation to address the issue of extreme weights.
+# You can apply the same truncation at the 0.01 percentile, although the impact is minimal.
+data$wA2_t <- pmin(data$wA2, quantile(data$wA2, 0.99, na.rm=TRUE))
+
+# Final weight
+data$fw <- data$wA1_t * data$wA2_t
+
+# Marginal structural model with robust standard errors.
+# If you analyze a binary outcome, add 'family = binomial'.
+msm <- geeglm(
+  outcomeT3 ~ exposureT1 * exposureT2,
+  id = id,
+  weights = fw,
+  std.err = "san.se",
+  data = data
+)
+
+# Coefficients (contrasts) and 95% CIs.
+# These correspond to the effects for the T1-only and T2-only exposure groups
+# compared with the group unexposed at both T1 and T2.
+out <- summary(msm)$coefficients
+z <- 1.96
+ci_low  <- out[,1] - z * out[,2]
+ci_high <- out[,1] + z * out[,2]
+results <- cbind(out, ci_low, ci_high)
+print(results)
+
+# The estimated effect for the "always exposed" group (exposed at both T1 and T2)
+# compared with the group unexposed at both time points.
+always=glht(msm, linfct = c("exposureT1 + exposureT2 + exposureT1:exposureT2 = 0"))
+summary(always)
+confint(always)
