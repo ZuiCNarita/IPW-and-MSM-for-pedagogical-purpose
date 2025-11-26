@@ -44,7 +44,6 @@ data$wA2_t <- pmin(data$wA2, quantile(data$wA2, 0.99, na.rm=TRUE))
 data$fw <- data$wA1_t * data$wA2_t
 
 # Marginal structural model with robust standard errors.
-# If you analyze a binary outcome, add 'family = binomial'.
 msm <- geeglm(
   outcomeT3 ~ exposureT1 * exposureT2,
   id = id,
@@ -68,3 +67,39 @@ print(results)
 always=glht(msm, linfct = c("exposureT1 + exposureT2 + exposureT1:exposureT2 = 0"))
 summary(always)
 confint(always)
+
+##############################################    
+########## Optional: binary outcome ##########
+##############################################
+msm_bin <- geeglm(
+  outcomeT3_bin ~ exposureT1 * exposureT2,
+  id = id,
+  weights = fw,
+  family = binomial,
+  std.err = "san.se",
+  data = data
+)
+out_bin <- summary(msm_bin)$coefficients
+z <- 1.96
+ci_low_bin  <- out_bin[, 1] - z * out_bin[, 2]
+ci_high_bin <- out_bin[, 1] + z * out_bin[, 2]
+
+results_bin <- data.frame(
+  Term   = rownames(out_bin),
+  OR     = exp(out_bin[, 1]),
+  CI_low = exp(ci_low_bin),
+  CI_high = exp(ci_high_bin),
+  P      = out_bin[, 4],
+  row.names = NULL
+)
+print(results_bin)
+# Always exposed
+always_bin <- glht(
+  msm_bin,
+  linfct = "exposureT1 + exposureT2 + exposureT1:exposureT2 = 0"
+)
+s  <- summary(always_bin)$test$coef
+ci <- confint(always_bin)$confint[1, ]
+exp(s)
+exp(ci["lwr"])
+exp(ci["upr"])
